@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/plugins/project_fts" >
+        <file>icon.png</file>
+    </qresource>
+</RCC>

@@ -1,0 +1,47 @@
+# This file contains metadata for your plugin.
+
+# This file should be included when you package your plugin.# Mandatory items:
+
+[general]
+name=Project Full Text Search
+qgisMinimumVersion=3.0
+description=This plugin generates a full text search index containing all attributes of all layers of a loaded project. The user then can use a single text-input field to search within all available attributes.
+version=0.1
+author=Markus Mayr
+email=markus.mayr@gisforge.com
+
+about=This plugin uses a SQLite database to create a full-text-search trigram Index of all attributes of all loaded layers within a QGIS project. Any change applied to these layers can be tracked by the plugin automatically and the full-text-search index is updated accordingly. The user then can use a single text-input field to search for any value present within the attributes.
+
+tracker=http://bugs
+repository=http://repo
+# End of mandatory metadata
+
+# Recommended items:
+
+hasProcessingProvider=no
+# Uncomment the following line and add your changelog:
+# changelog=
+
+# Tags are comma separated with spaces allowed
+tags=attribute, search
+
+homepage=http://homepage
+category=Plugins
+icon=icon.png
+# experimental flag
+experimental=True
+
+# deprecated flag (applies to the whole plugin, not just a single version)
+deprecated=False
+
+# Since QGIS 3.8, a comma separated list of plugins to be installed
+# (or upgraded) can be specified.
+# Check the documentation for more information.
+# plugin_dependencies=
+
+Category of the plugin: Raster, Vector, Database or Web
+# category=
+
+# If the plugin can run on QGIS Server.
+server=False
+
