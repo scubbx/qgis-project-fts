@@ -37,6 +37,7 @@ from .resources import *
 
 # Import the code for the DockWidget
 from .project_fts_dockwidget import projectFTSDockWidget
+from pathlib import Path
 import os.path
 import os
 
@@ -87,7 +88,8 @@ class projectFTS:
         self.db_path = None
         self.conn = None
         self.cur = None
-
+        self.layersAdded_signal = QgsProject.instance().layersAdded.connect(self.add_layers)
+        self.layersRemoved_signal = QgsProject.instance().layersRemoved.connect(self.remove_layers)
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -188,9 +190,6 @@ class projectFTS:
             text=self.tr(u'Full Text Search'),
             callback=self.run,
             parent=self.iface.mainWindow())
-        
-        QgsProject.instance().layersAdded.connect(self.add_layers)
-        QgsProject.instance().layersRemoved.connect(self.remove_layers)
 
     #--------------------------------------------------------------------------
 
@@ -207,7 +206,7 @@ class projectFTS:
         # Commented next statement since it causes QGIS crashe
         # when closing the docked window:
         # self.dockwidget = None
-        self.cur.close()
+        if self.conn: self.conn.close()
         self.pluginIsActive = False
 
 
@@ -223,6 +222,9 @@ class projectFTS:
             self.iface.removeToolBarIcon(action)
         # remove the toolbar
         del self.toolbar
+
+        QgsProject.instance().layersAdded.disconnect(self.layersAdded_signal)
+        QgsProject.instance().layersRemoved.disconnect(self.layersRemoved_signal)
 
     #--------------------------------------------------------------------------
 
@@ -240,8 +242,8 @@ class projectFTS:
             return False
 
     def completed(self, exception, result=None):
-        """This is called when doSomething is finished.
-        Exception is not None if doSomething raises an exception.
+        """This is called when insert_features is finished.
+        Exception is not None if insert_features raises an exception.db_path
         result is the return value of insert_features."""
         QgsMessageLog.logMessage("completed()", tags="ftsPlugin", level=Qgis.Info)
         self.refresh_info()
@@ -266,122 +268,142 @@ class projectFTS:
 
     def refresh_info(self):
         # how many layers are indexed
-        sql = "select layer_uri from fts5qgis from fts5qgis"
+        sql = "select layer_uri from fts5qgis"
         sql_result = self.cur.execute(sql)
         info_num_layers = len(sql_result.fetchall())
 
         self.dockwidget.labelDBInfo.text = f"layers loaded: {info_num_layers}"
 
-
     def add_layers(self, layers):
+        # Create sqlite db on first added layer
+        self.set_db()
         for layer_num, layer in enumerate(layers):
-            # Create sqlite db on first added layer
-            self.set_db()
-            
             ## build list of attributes
             #feature_attributes = []
             #for feature in layer.getFeatures():
             #    feature_attributes.append([ str(x) for x in feature.attributes() ])
 
-            if not self.table_exists(layer.dataProvider().dataSourceUri()):
+            if not self.table_exists(layer.id()):
                 # Store layer attributes in sqlite table
-                layer_name = layer.name()
-                uri = layer.dataProvider().dataSourceUri()
-                self.create_table(uri)
-                total_steps = layer.featureCount()
-                QgsMessageLog.logMessage(f"Indexing Layer {layer_num+1}/{len(layers)} ...", tag="ftsPlugin", level=Qgis.Info)
-                task = QgsTask.fromFunction(f"Indexing Layer {layer_num+1}/{len(layers)}",
+                layer_uri = layer.dataProvider().dataSourceUri()
+                #layer_id = layer.id()
+                self.create_table(layer.id())
+                try:
+                    total_steps = layer.featureCount()
+                except AttributeError as err:
+                    QgsMessageLog.logMessage(f"{err}", tag="ftsPlugin", level=Qgis.Warning)
+                    continue
+                
+                QgsMessageLog.logMessage(f"Indexing Layer '{layer.name()}' ({layer_num+1}/{len(layers)}) ...", tag="ftsPlugin", level=Qgis.Info)
+
+                task = QgsTask.fromFunction(f"Indexing Layer '{layer.name()}' ({layer_num+1}/{len(layers)})",
                                             self.insert_features,
                                             on_finished=self.completed,
-                                            db_path=self.db_path,
+                                            db_path=copy.copy(self.db_path),
                                             total_steps=copy.copy(total_steps),
-#                                            all_features=feature_attributes,
-                                            layer_name=layer_name,
-                                            uri=uri)
+                                            layer_id=copy.copy(layer.id()),
+                                            layer_uri=copy.copy(layer_uri))
                 QgsApplication.taskManager().addTask(task)
 
             # Connect to layer attribute value changed signal
             layer.attributeValueChanged.connect(self.update_feature)
 
-    def remove_layers(self, layers):
+    def remove_layers(self, layer_ids):
+        # todo: layers does seem to contain the layername+hash which is not found by .mapLayersByName()
         QgsMessageLog.logMessage(f"remove_layers()", tag="ftsPlugin", level=Qgis.Info)
-        for layer in layers:
+        QgsMessageLog.logMessage(f"layer_ids: {layer_ids}", tag="ftsPlugin", level=Qgis.Info)
+
+        for layer_id in layer_ids:
+            QgsMessageLog.logMessage(f"layer_id: {layer_id}", tag="ftsPlugin", level=Qgis.Info)
             # Remove table for this layer
-            layer_name = layer
-            self.drop_table(layer_name)
+            #project_layer = QgsProject.instance().mapLayer(layer_id)
+            #layer_uri = project_layer.dataProvider().dataSourceUri()
+            #QgsMessageLog.logMessage(f"layer_uri: {layer_uri}", tag="ftsPlugin", level=Qgis.Info)
+            self.drop_table(layer_id)
 
     def set_db(self):
         # create or load a database
-        QgsMessageLog.logMessage(f"create_db()", tag="ftsPlugin", level=Qgis.Info)
-        if self.db_path is None: 
-            QgsMessageLog.logMessage(f"Project Filename is '{QgsProject.instance().fileName()}'", tag="ftsPlugin", level=Qgis.Info)
+        QgsMessageLog.logMessage(f"set_db()", tag="ftsPlugin", level=Qgis.Info)
+        if self.db_path is None:
             if QgsProject.instance().fileName() != "":
                 QgsMessageLog.logMessage(f"creating fts database at {QgsProject.instance().fileName()}.fts.sqlite", tag="ftsPlugin", level=Qgis.Info)
                 self.db_path = f"{QgsProject.instance().fileName()}.fts.sqlite"
                 #self.db_path = f"/tmp/unsaved.fts.sqlite"
-                self.conn = sqlite3.connect(self.db_path)
+                self.conn = sqlite3.connect(self.db_path, timeout=120, isolation_level="EXCLUSIVE")
             else:
-                QgsMessageLog.logMessage(f"creating fts database as in-memory database", tag="ftsPlugin", level=Qgis.Info)
+                QgsMessageLog.logMessage(f"Project is not saved yet, creating fts database as in-memory database", tag="ftsPlugin", level=Qgis.Info)
                 self.db_path = ':memory:'
-                self.conn = sqlite3.connect(':memory:')
-        self.cur = self.conn.cursor()
-
+                self.conn = sqlite3.connect(':memory:', timeout=120, isolation_level="EXCLUSIVE")
+        else:
+            self.conn = sqlite3.connect(self.db_path, timeout=120, isolation_level="EXCLUSIVE")
+        
+        cur = self.conn.cursor()
         # prepare metadata table
-        sql = f"CREATE TABLE IF NOT EXISTS fts5qgis (id integer PRIMARY KEY, layer_uri text NOT NULL)"
-        self.cur.execute(sql)
+        sql = f"CREATE TABLE IF NOT EXISTS fts5qgis (id integer PRIMARY KEY, layer_id text NOT NULL)"
+        cur.execute(sql)
         self.conn.commit()
+        cur.close()
 
-#        self.conn.close()
-
-    def create_table(self, uri):
+    def create_table(self, table_name):
         # SQL for creating a table matching the layer schema
-        #QgsMessageLog.logMessage(f"CREATE VIRTUAL TABLE IF NOT EXISTS {uri} USING fts5 (fid, data, uri, tokenize='trigram')", tag="ftsPlugin")
-        sql = f"CREATE VIRTUAL TABLE IF NOT EXISTS '{uri}' USING fts5 (fid, data, tokenize='trigram')"
-        self.cur.execute(sql)
+        #QgsMessageLog.logMessage(f"CREATE VIRTUAL TABLE IF NOT EXISTS {table_name} USING fts5 (fid, data, table_name, tokenize='trigram')", tag="ftsPlugin")
+        cur = self.conn.cursor() 
+        sql = f"CREATE VIRTUAL TABLE IF NOT EXISTS '{table_name}' USING fts5 (fid, data,  tokenize='trigram')"
+        cur.execute(sql)
 
         # insert data to metadata-table
-        sql = "INSERT INTO fts5qgis (layer_uri) VALUES( ? )"
-        self.cur.execute(sql, (uri,))
+        sql = "INSERT INTO fts5qgis (layer_id) VALUES( ? )"
+        cur.execute(sql, (table_name,))
         self.conn.commit()
+        cur.close()
 
-    def insert_features(self, task: QgsTask, db_path, total_steps, layer_name, uri):
-        # select the actual layer of the qgis project
-        project_layers = QgsProject.instance().mapLayersByName(layer_name)
-        # set all actual qgis project layers to read-only during the indexing process
-        for project_layer in project_layers:
-            project_layer.setReadOnly(True)
-        
+    def insert_features(self, task: QgsTask, db_path, total_steps, layer_id, layer_uri):
+        project_layer = QgsProject.instance().mapLayer(layer_id)
+        uri = project_layer.dataProvider().dataSourceUri()
+        #uri = layer_uri
+
         # load the layer with features to be imported
-        layer = QgsVectorLayer(uri, layer_name, "ogr")
+        layer = QgsVectorLayer(uri, "importlayer", "ogr")
         if not layer.isValid():
+            # data souce is non-valid, so do not operate on it (might be an e.g. raster)
             task.setProgress(100)
-            layer.dataProvider().dataSourceUri().clear()
-            return True
+            del(layer)
+            task.exception = Exception("Layer is not valid")
+            return False
         
-        QgsMessageLog.logMessage(f"Begin inserting features ({layer.featureCount()} in total)", tag="ftsPlugin", level=Qgis.Info)
+        # set all actual qgis project layers to read-only during the indexing process
+        project_layer.setReadOnly(True)
+        
         # Insert layer features into corresponding sqlite table
         # we have to use an own connection and cursor object, since we cannot
         # use an element from the main-thread
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path, timeout=120, isolation_level="EXCLUSIVE")
         cur = conn.cursor()
-        sql = f"INSERT INTO '{uri}' (fid, data) VALUES (?, ?)"
-
+        sql = f"INSERT INTO '{layer_id}' (fid, data) VALUES (?, ?)"
+        
         #all_features = layer.getFeatures()
 
         #for i, feature in enumerate(layer.getFeatures()):
         for i, feature in enumerate(layer.getFeatures(QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry))):
             # Fortschritt aktualisieren
             task.setProgress((i + 1) / total_steps * 100)
-            feature_id = feature.id()
             feature_attributes = ";".join([ str(x) for x in feature.attributes() ])
-            cur.execute(sql, (feature_id , feature_attributes) )
-            # Fortschritt aktualisieren und überprüfen, ob der Task abgebrochen wurde
+            cur.execute(sql, (feature.id() , feature_attributes) )
+            # Check if task was cancelled
             if task.isCanceled():
+                QgsMessageLog.logMessage(f"Indexing Task cancelled", tag="ftsPlugin", level=Qgis.Info)
+                cur.close()
                 return None  # Task wurde abgebrochen
-
+        
         conn.commit()
-        # Datei schließen, wenn sie nicht mehr benötigt wird
-        layer.dataProvider().dataSourceUri().clear()
+        # Remove layer from memory
+        del(layer)
+        
+        QgsMessageLog.logMessage(f"Committed change", tag="ftsPlugin", level=Qgis.Info)
+        # remove read-only flag from layers matching the current layer-uri
+        project_layer.setReadOnly(False)
+
+        cur.close()
         return True  # Task wurde erfolgreich abgeschlossen
         
     def update_feature(self, fid, idx, value):
@@ -389,10 +411,20 @@ class projectFTS:
         QgsMessageLog.logMessage(f"update_feature()", tag="ftsPlugin", level=Qgis.Info)
         pass
 
-    def drop_table(self, name):
+    def drop_table(self, layer_id):
         # SQL for dropping a table
-        QgsMessageLog.logMessage(f"drop_table()", tag="ftsPlugin", level=Qgis.Info)
-        pass
+        QgsMessageLog.logMessage(f"drop_table() with layer_id {layer_id}", tag="ftsPlugin", level=Qgis.Info)
+        cur = self.conn.cursor()
+
+        # fts tables
+        sql = f"DROP TABLE IF EXISTS '{layer_id}'"
+        cur.execute(sql)
+
+        # remove entryfrom metadata-table
+        sql = f"DELETE FROM fts5qgis WHERE layer_id == '{layer_id}';"
+        cur.execute(sql)
+        self.conn.commit()
+        cur.close()
 
     def run(self):
         """Run method that loads and starts the plugin"""
@@ -422,10 +454,16 @@ class projectFTS:
 
             self.dockwidget.buttonRefreshIndex.clicked.connect(self.reload_all)
             self.dockwidget.textSearch.textChanged.connect(self.search_fts)
+            self.dockwidget.listView.itemClicked.connect(self.clicked_object)
 
             # perform a layer-add of all layers
             if len(QgsProject.instance().mapLayers().values()) > 0:
                 self.add_layers(QgsProject.instance().mapLayers().values())
+
+    def clicked_object(self):
+        obj_index = self.dockwidget.listView.currentRow()
+        obj_text = self.dockwidget.listView.item(obj_index)
+        QgsMessageLog.logMessage(f"clicked '{obj_text.text()}'", tag="ftsPlugin", level=Qgis.Info)
 
     def reload_all(self):
         QgsMessageLog.logMessage(f"reload_all()", tag="ftsPlugin", level=Qgis.Info)
@@ -447,14 +485,15 @@ class projectFTS:
         self.dockwidget.listView.clear()
         if len(searchtext) > 3:
             #QgsMessageLog.logMessage(f"search_fts({searchtext})", tag="ftsPlugin", level=Qgis.Info)
-            self.cur = self.conn.cursor() 
-            sql = "SELECT layer_uri FROM fts5qgis"
-            alltablescur = self.cur.execute(sql)
+            cur = self.conn.cursor() 
+            sql = "SELECT layer_id FROM fts5qgis"
+            alltablescur = cur.execute(sql)
             alltablesresults = alltablescur.fetchall()
             for singletable in alltablesresults:
                 singletablename = singletable[0]
                 sql = f"SELECT * FROM '{singletablename}' WHERE data MATCH ?"
-                searchcursor = self.cur.execute(sql, (searchtext,))
+                searchcursor = cur.execute(sql, (searchtext,))
                 searchresult = searchcursor.fetchall()
                 for singleresult in searchresult:
                     self.dockwidget.listView.addItem(str(singleresult))
+            cur.close()
