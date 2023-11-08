@@ -87,7 +87,7 @@ class projectFTS:
 
         self.db_path = None
         self.conn = None
-        self.cur = None
+        #self.cur = None
         self.layersAdded_signal = QgsProject.instance().layersAdded.connect(self.add_layers)
         self.layersRemoved_signal = QgsProject.instance().layersRemoved.connect(self.remove_layers)
 
@@ -323,19 +323,18 @@ class projectFTS:
 
     def set_db(self):
         # create or load a database
-        QgsMessageLog.logMessage(f"set_db()", tag="ftsPlugin", level=Qgis.Info)
-        if self.db_path is None:
+        QgsMessageLog.logMessage(f"set_db(), db_path={self.db_path}", tag="ftsPlugin", level=Qgis.Info)
+        if self.conn is None or self.db_path is None:
             if QgsProject.instance().fileName() != "":
                 QgsMessageLog.logMessage(f"creating fts database at {QgsProject.instance().fileName()}.fts.sqlite", tag="ftsPlugin", level=Qgis.Info)
                 self.db_path = f"{QgsProject.instance().fileName()}.fts.sqlite"
-                #self.db_path = f"/tmp/unsaved.fts.sqlite"
                 self.conn = sqlite3.connect(self.db_path, timeout=120, isolation_level="EXCLUSIVE")
             else:
                 QgsMessageLog.logMessage(f"Project is not saved yet, creating fts database as in-memory database", tag="ftsPlugin", level=Qgis.Info)
                 self.db_path = ':memory:'
                 self.conn = sqlite3.connect(':memory:', timeout=120, isolation_level="EXCLUSIVE")
-        else:
-            self.conn = sqlite3.connect(self.db_path, timeout=120, isolation_level="EXCLUSIVE")
+        #else:
+        #    self.conn = sqlite3.connect(self.db_path, timeout=120, isolation_level="EXCLUSIVE")
         
         cur = self.conn.cursor()
         # prepare metadata table
