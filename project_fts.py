@@ -228,19 +228,6 @@ class projectFTS:
 
     #--------------------------------------------------------------------------
 
-    def table_exists(self, table_name):
-        cur = self.conn.cursor()
-        sql = "SELECT * FROM sqlite_master WHERE type='table' AND tbl_name=?"
-        searchcursor = cur.execute(sql, (table_name,))
-        searchresult = searchcursor.fetchall()
-        cur.close()
-        if len(searchresult) > 0:
-            QgsMessageLog.logMessage(f"Layer '{table_name}' already exists in the fts database", tag="ftsPlugin", level=Qgis.Info)
-            return True
-        else:
-            QgsMessageLog.logMessage(f"Layer '{table_name}' does not exist in the fts database", tag="ftsPlugin", level=Qgis.Info)
-            return False
-
     def completed(self, exception, result=None):
         """This is called when insert_features is finished.
         Exception is not None if insert_features raises an exception.db_path
