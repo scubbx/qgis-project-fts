@@ -403,6 +403,7 @@ class projectFTS:
         project_layer.setReadOnly(False)
 
         cur.close()
+        conn.close()
         return True  # Task wurde erfolgreich abgeschlossen
         
     def update_feature(self, fid, idx, value):
