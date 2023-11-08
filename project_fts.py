@@ -276,18 +276,19 @@ class projectFTS:
 
     def add_layers(self, layers):
         # Create sqlite db on first added layer
-        self.set_db()
+        self.set_db_path()
         for layer_num, layer in enumerate(layers):
             ## build list of attributes
             #feature_attributes = []
             #for feature in layer.getFeatures():
             #    feature_attributes.append([ str(x) for x in feature.attributes() ])
 
-            if not self.table_exists(layer.id()):
+            index_file_path = os.path.join(self.db_path,f"{layer.id()}.fts",)
+            if not os.path.exists(index_file_path):
                 # Store layer attributes in sqlite table
                 layer_uri = layer.dataProvider().dataSourceUri()
                 #layer_id = layer.id()
-                self.create_table(layer.id())
+                self.create_index_file(index_file_path)
                 try:
                     total_steps = layer.featureCount()
                 except AttributeError as err:
@@ -302,7 +303,7 @@ class projectFTS:
                                             db_path=copy.copy(self.db_path),
                                             total_steps=copy.copy(total_steps),
                                             layer_id=copy.copy(layer.id()),
-                                            layer_uri=copy.copy(layer_uri))
+                                            index_file_path=index_file_path)
                 QgsApplication.taskManager().addTask(task)
 
             # Connect to layer attribute value changed signal
@@ -325,9 +326,9 @@ class projectFTS:
         index_files = [x for x in os.scandir(index_folder) if x.name.startswith("ftsindex_")]
         return index_files
 
-    def set_db(self):
+    def set_db_path(self):
         # create or load a database
-        QgsMessageLog.logMessage(f"set_db()", tag="ftsPlugin", level=Qgis.Info)
+        QgsMessageLog.logMessage(f"set_db_path()", tag="ftsPlugin", level=Qgis.Info)
         if self.db_path is None:
             if QgsProject.instance().fileName() != "":
                 QgsMessageLog.logMessage(f"creating fts database at {QgsProject.instance().fileName()}.fts", tag="ftsPlugin", level=Qgis.Info)
@@ -336,7 +337,7 @@ class projectFTS:
                 #self.conn = sqlite3.connect(self.db_path, timeout=120, isolation_level="EXCLUSIVE")
             else:
                 QgsMessageLog.logMessage(f"Project is not saved yet, creating fts database at '/tmp/qgisfts'", tag="ftsPlugin", level=Qgis.Info)
-                self.db_path = '/tmp/qgisfts'
+                self.db_path = '/tmp/qgis.fts'
                 #self.conn = sqlite3.connect(':memory:', timeout=120, isolation_level="EXCLUSIVE")
         else:
             #self.conn = sqlite3.connect(self.db_path, timeout=120, isolation_level="EXCLUSIVE")
@@ -350,20 +351,22 @@ class projectFTS:
         #self.conn.commit()
         #cur.close()
 
-    def create_table(self, table_name):
+    def create_index_file(self, index_file_path):
+        QgsMessageLog.logMessage(f"(create_index_file): Creating index-file at '{index_file_path}'", tag="ftsPlugin")
+        conn = sqlite3.connect(index_file_path, timeout=120, isolation_level="EXCLUSIVE")
         # SQL for creating a table matching the layer schema
-        #QgsMessageLog.logMessage(f"CREATE VIRTUAL TABLE IF NOT EXISTS {table_name} USING fts5 (fid, data, table_name, tokenize='trigram')", tag="ftsPlugin")
-        cur = self.conn.cursor() 
-        sql = f"CREATE VIRTUAL TABLE IF NOT EXISTS '{table_name}' USING fts5 (fid, data,  tokenize='trigram')"
+        cur = conn.cursor()
+        sql = f"CREATE VIRTUAL TABLE IF NOT EXISTS 'ftslayer' USING fts5 (fid, data,  tokenize='trigram')"
         cur.execute(sql)
 
-        # insert data to metadata-table
-        sql = "INSERT INTO fts5qgis (layer_id) VALUES( ? )"
-        cur.execute(sql, (table_name,))
-        self.conn.commit()
-        cur.close()
+        ## insert data to metadata-table
+        #sql = "INSERT INTO fts5qgis (layer_id) VALUES( ? )"
+        #cur.execute(sql, (table_name,))
+        #self.conn.commit()
+        #cur.close()
+        conn.close()
 
-    def insert_features(self, task: QgsTask, db_path, total_steps, layer_id, layer_uri):
+    def insert_features(self, task: QgsTask, db_path, total_steps, layer_id, index_file_path):
         project_layer = QgsProject.instance().mapLayer(layer_id)
         uri = project_layer.dataProvider().dataSourceUri()
         #uri = layer_uri
@@ -383,9 +386,9 @@ class projectFTS:
         # Insert layer features into corresponding sqlite table
         # we have to use an own connection and cursor object, since we cannot
         # use an element from the main-thread
-        conn = sqlite3.connect(db_path, timeout=120, isolation_level="EXCLUSIVE")
+        conn = sqlite3.connect(index_file_path, timeout=120, isolation_level="EXCLUSIVE")
         cur = conn.cursor()
-        sql = f"INSERT INTO '{layer_id}' (fid, data) VALUES (?, ?)"
+        sql = f"INSERT INTO 'ftslayer' (fid, data) VALUES (?, ?)"
         
         #all_features = layer.getFeatures()
 
