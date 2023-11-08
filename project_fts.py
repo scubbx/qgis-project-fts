@@ -321,28 +321,34 @@ class projectFTS:
             #QgsMessageLog.logMessage(f"layer_uri: {layer_uri}", tag="ftsPlugin", level=Qgis.Info)
             self.drop_table(layer_id)
 
+    def list_index_files(index_folder):
+        index_files = [x for x in os.scandir(index_folder) if x.name.startswith("ftsindex_")]
+        return index_files
+
     def set_db(self):
         # create or load a database
         QgsMessageLog.logMessage(f"set_db()", tag="ftsPlugin", level=Qgis.Info)
         if self.db_path is None:
             if QgsProject.instance().fileName() != "":
-                QgsMessageLog.logMessage(f"creating fts database at {QgsProject.instance().fileName()}.fts.sqlite", tag="ftsPlugin", level=Qgis.Info)
-                self.db_path = f"{QgsProject.instance().fileName()}.fts.sqlite"
-                #self.db_path = f"/tmp/unsaved.fts.sqlite"
-                self.conn = sqlite3.connect(self.db_path, timeout=120, isolation_level="EXCLUSIVE")
+                QgsMessageLog.logMessage(f"creating fts database at {QgsProject.instance().fileName()}.fts", tag="ftsPlugin", level=Qgis.Info)
+                self.db_path = f"{QgsProject.instance().fileName()}.fts"
+                #self.db_path = f"{QgsProject.instance().fileName()}.fts.sqlite"
+                #self.conn = sqlite3.connect(self.db_path, timeout=120, isolation_level="EXCLUSIVE")
             else:
-                QgsMessageLog.logMessage(f"Project is not saved yet, creating fts database as in-memory database", tag="ftsPlugin", level=Qgis.Info)
-                self.db_path = ':memory:'
-                self.conn = sqlite3.connect(':memory:', timeout=120, isolation_level="EXCLUSIVE")
+                QgsMessageLog.logMessage(f"Project is not saved yet, creating fts database at '/tmp/qgisfts'", tag="ftsPlugin", level=Qgis.Info)
+                self.db_path = '/tmp/qgisfts'
+                #self.conn = sqlite3.connect(':memory:', timeout=120, isolation_level="EXCLUSIVE")
         else:
-            self.conn = sqlite3.connect(self.db_path, timeout=120, isolation_level="EXCLUSIVE")
+            #self.conn = sqlite3.connect(self.db_path, timeout=120, isolation_level="EXCLUSIVE")
+            pass
+        os.makedirs(self.db_path, exist_ok=True)
         
-        cur = self.conn.cursor()
+        #cur = self.conn.cursor()
         # prepare metadata table
-        sql = f"CREATE TABLE IF NOT EXISTS fts5qgis (id integer PRIMARY KEY, layer_id text NOT NULL)"
-        cur.execute(sql)
-        self.conn.commit()
-        cur.close()
+        #sql = f"CREATE TABLE IF NOT EXISTS fts5qgis (id integer PRIMARY KEY, layer_id text NOT NULL)"
+        #cur.execute(sql)
+        #self.conn.commit()
+        #cur.close()
 
     def create_table(self, table_name):
         # SQL for creating a table matching the layer schema
@@ -472,11 +478,11 @@ class projectFTS:
         # first remove old database
         if self.db_path is not None: 
             if QgsProject.instance().fileName() is not None:
-                if os.path.exists(f"{QgsProject.instance().fileName()}.fts.sqlite"):
-                    os.remove(f"{QgsProject.instance().fileName()}.fts.sqlite")
+                if os.path.exists(self.db_path):
+                    os.remove(self.db_path)
             else:
-                if os.path.exists("/tmp/unsaved.fts.sqlite"):
-                    os.remove("/tmp/unsaved.fts.sqlite")
+                if os.path.exists("/tmp/qgisfts"):
+                    os.remove("/tmp/qgisfts")
             self.db_path = None
         if len(QgsProject.instance().mapLayers().values()) > 0:
             self.add_layers(QgsProject.instance().mapLayers().values())
