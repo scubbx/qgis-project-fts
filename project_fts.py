@@ -398,8 +398,9 @@ class projectFTS:
         QgsMessageLog.logMessage(f"Committed change", tag="ftsPlugin", level=Qgis.Info)
         # remove read-only flag from layers matching the current layer-uri
         project_layer.setReadOnly(False)
-
+        QgsMessageLog.logMessage(f"READONLY IS OFF", tag="ftsPlugin", level=Qgis.Info)
         cur.close()
+        QgsMessageLog.logMessage(f"CURSOR IS CLOSED", tag="ftsPlugin", level=Qgis.Info)
         return True  # Task wurde erfolgreich abgeschlossen
         
     def update_feature(self, fid, idx, value):
