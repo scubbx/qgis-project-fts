@@ -381,7 +381,7 @@ class projectFTS:
         sql = f"INSERT INTO '{layer_id}' (fid, data) VALUES (?, ?)"
         
         #all_features = layer.getFeatures()
-
+        cur.execute("begin")
         #for i, feature in enumerate(layer.getFeatures()):
         for i, feature in enumerate(layer.getFeatures(QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry))):
             # Fortschritt aktualisieren
@@ -393,6 +393,8 @@ class projectFTS:
                 QgsMessageLog.logMessage(f"Indexing Task cancelled", tag="ftsPlugin", level=Qgis.Info)
                 cur.close()
                 return None  # Task wurde abgebrochen
+
+        cur.execute("commit")
         
         conn.commit()
         # Remove layer from memory
