@@ -339,7 +339,7 @@ class projectFTS:
         uri = project_layer.dataProvider().dataSourceUri()
         #uri = layer_uri
         
-        raise Exception ("Hello")
+        #raise Exception ("Hello")
 
         # load the layer with features to be imported
         layer = QgsVectorLayer(uri, "importlayer", "ogr")
