@@ -91,6 +91,8 @@ class projectFTS:
         self.layersAdded_signal = QgsProject.instance().layersAdded.connect(self.add_layers)
         self.layersRemoved_signal = QgsProject.instance().layersRemoved.connect(self.remove_layers)
 
+        self.tasklist = []
+
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
         """Get the translation for a string using Qt translation API.
@@ -303,6 +305,11 @@ class projectFTS:
                                             total_steps=copy.copy(total_steps),
                                             layer_id=copy.copy(layer.id()),
                                             layer_uri=copy.copy(layer_uri))
+
+                # IMPORTANT! We have to hide the task from pythons garbage collector to
+                # make sure delayed tasks are not removed.
+                self.tasklist.append(task)
+
                 QgsApplication.taskManager().addTask(task)
 
             # Connect to layer attribute value changed signal
