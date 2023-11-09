@@ -40,6 +40,7 @@ from .project_fts_dockwidget import projectFTSDockWidget
 from pathlib import Path
 import os.path
 import os
+import shutil
 
 import sqlite3
 import copy
@@ -90,6 +91,8 @@ class projectFTS:
         self.cur = None
         self.layersAdded_signal = QgsProject.instance().layersAdded.connect(self.add_layers)
         self.layersRemoved_signal = QgsProject.instance().layersRemoved.connect(self.remove_layers)
+
+        self.set_db_path()
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -263,7 +266,6 @@ class projectFTS:
 
     def add_layers(self, layers):
         # Create sqlite db on first added layer
-        self.set_db_path()
         for layer_num, layer in enumerate(layers):
             ## build list of attributes
             #feature_attributes = []
@@ -275,7 +277,7 @@ class projectFTS:
                 # Store layer attributes in sqlite table
                 layer_uri = layer.dataProvider().dataSourceUri()
                 #layer_id = layer.id()
-                self.create_index_file(index_file_path)
+                #self.create_index_file(index_file_path)
                 try:
                     total_steps = layer.featureCount()
                 except AttributeError as err:
@@ -320,38 +322,12 @@ class projectFTS:
             if QgsProject.instance().fileName() != "":
                 QgsMessageLog.logMessage(f"creating fts database at {QgsProject.instance().fileName()}.fts", tag="ftsPlugin", level=Qgis.Info)
                 self.db_path = f"{QgsProject.instance().fileName()}.fts"
-                #self.db_path = f"{QgsProject.instance().fileName()}.fts.sqlite"
-                #self.conn = sqlite3.connect(self.db_path, timeout=120, isolation_level="EXCLUSIVE")
             else:
                 QgsMessageLog.logMessage(f"Project is not saved yet, creating fts database at '/tmp/qgisfts'", tag="ftsPlugin", level=Qgis.Info)
                 self.db_path = '/tmp/qgis.fts'
-                #self.conn = sqlite3.connect(':memory:', timeout=120, isolation_level="EXCLUSIVE")
         else:
-            #self.conn = sqlite3.connect(self.db_path, timeout=120, isolation_level="EXCLUSIVE")
             pass
         os.makedirs(self.db_path, exist_ok=True)
-        
-        #cur = self.conn.cursor()
-        # prepare metadata table
-        #sql = f"CREATE TABLE IF NOT EXISTS fts5qgis (id integer PRIMARY KEY, layer_id text NOT NULL)"
-        #cur.execute(sql)
-        #self.conn.commit()
-        #cur.close()
-
-    def create_index_file(self, index_file_path):
-        QgsMessageLog.logMessage(f"(create_index_file): Creating index-file at '{index_file_path}'", tag="ftsPlugin")
-        conn = sqlite3.connect(index_file_path, timeout=120, isolation_level="EXCLUSIVE")
-        # SQL for creating a table matching the layer schema
-        cur = conn.cursor()
-        sql = f"CREATE VIRTUAL TABLE IF NOT EXISTS 'ftslayer' USING fts5 (fid, data,  tokenize='trigram')"
-        cur.execute(sql)
-
-        ## insert data to metadata-table
-        #sql = "INSERT INTO fts5qgis (layer_id) VALUES( ? )"
-        #cur.execute(sql, (table_name,))
-        #self.conn.commit()
-        #cur.close()
-        conn.close()
 
     def insert_features(self, task: QgsTask, db_path, total_steps, layer_id, index_file_path):
         project_layer = QgsProject.instance().mapLayer(layer_id)
@@ -368,13 +344,16 @@ class projectFTS:
             return False
         
         # set all actual qgis project layers to read-only during the indexing process
-        project_layer.setReadOnly(True)
+        ##project_layer.setReadOnly(True)
         
         # Insert layer features into corresponding sqlite table
         # we have to use an own connection and cursor object, since we cannot
         # use an element from the main-thread
         conn = sqlite3.connect(index_file_path, timeout=120, isolation_level="EXCLUSIVE")
         cur = conn.cursor()
+        sql = f"CREATE VIRTUAL TABLE IF NOT EXISTS 'ftslayer' USING fts5 (fid, data,  tokenize='trigram')"
+        cur.execute(sql)
+
         sql = f"INSERT INTO 'ftslayer' (fid, data) VALUES (?, ?)"
         
         #all_features = layer.getFeatures()
@@ -397,10 +376,12 @@ class projectFTS:
         
         QgsMessageLog.logMessage(f"Committed change", tag="ftsPlugin", level=Qgis.Info)
         # remove read-only flag from layers matching the current layer-uri
-        project_layer.setReadOnly(False)
+        ##project_layer.setReadOnly(False)
         QgsMessageLog.logMessage(f"READONLY IS OFF", tag="ftsPlugin", level=Qgis.Info)
         cur.close()
         QgsMessageLog.logMessage(f"CURSOR IS CLOSED", tag="ftsPlugin", level=Qgis.Info)
+        conn.close()
+        QgsMessageLog.logMessage(f"CONNECTION IS CLOSED", tag="ftsPlugin", level=Qgis.Info)
         return True  # Task wurde erfolgreich abgeschlossen
         
     def update_feature(self, fid, idx, value):
@@ -409,19 +390,9 @@ class projectFTS:
         pass
 
     def drop_table(self, layer_id):
-        # SQL for dropping a table
-        QgsMessageLog.logMessage(f"drop_table() with layer_id {layer_id}", tag="ftsPlugin", level=Qgis.Info)
-        cur = self.conn.cursor()
-
-        # fts tables
-        sql = f"DROP TABLE IF EXISTS '{layer_id}'"
-        cur.execute(sql)
-
-        # remove entryfrom metadata-table
-        sql = f"DELETE FROM fts5qgis WHERE layer_id == '{layer_id}';"
-        cur.execute(sql)
-        self.conn.commit()
-        cur.close()
+        index_file_path = os.path.join(self.db_path,f"{layer_id}.fts")
+        QgsMessageLog.logMessage(f"drop_table() with index file {index_file_path}", tag="ftsPlugin", level=Qgis.Info)
+        os.remove(index_file_path)
 
     def run(self):
         """Run method that loads and starts the plugin"""
@@ -470,11 +441,14 @@ class projectFTS:
         if self.db_path is not None: 
             if QgsProject.instance().fileName() is not None:
                 if os.path.exists(self.db_path):
-                    os.remove(self.db_path)
+                    shutil.rmtree(self.db_path)
             else:
                 if os.path.exists("/tmp/qgisfts"):
                     os.remove("/tmp/qgisfts")
             self.db_path = None
+        
+        self.set_db_path()
+
         if len(QgsProject.instance().mapLayers().values()) > 0:
             self.add_layers(QgsProject.instance().mapLayers().values())
 
