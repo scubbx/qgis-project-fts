@@ -93,6 +93,7 @@ class projectFTS:
         self.layersRemoved_signal = QgsProject.instance().layersRemoved.connect(self.remove_layers)
 
         self.set_db_path()
+        self.tasklist = []
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -235,14 +236,14 @@ class projectFTS:
         """This is called when insert_features is finished.
         Exception is not None if insert_features raises an exception.db_path
         result is the return value of insert_features."""
-        QgsMessageLog.logMessage("completed()", tags="ftsPlugin", level=Qgis.Info)
+        QgsMessageLog.logMessage(f"completed(): {exception}", tag="ftsPlugin", level=Qgis.Info)
         self.refresh_info()
         if exception is None:
             if result is None:
                 QgsMessageLog.logMessage(
                     'Completed with no exception and no result '\
                     '(probably manually canceled by the user)',
-                    tags="ftsPlugin", level=Qgis.Critical)
+                    tag="ftsPlugin", level=Qgis.Critical)
             else:
                 QgsMessageLog.logMessage(
                     'Task {name} completed\n'
@@ -251,9 +252,9 @@ class projectFTS:
                         name=result['task'],
                         total=result['total'],
                         iterations=result['iterations']),
-                    tags="ftsPlugin", level=Qgis.Info)
+                    tag="ftsPlugin", level=Qgis.Info)
         else:
-            QgsMessageLog.logMessage("Exception: {}".format(exception), tags="ftsPlugin", level=Qgis.Critical)
+            QgsMessageLog.logMessage("Exception: {}".format(exception), tag="ftsPlugin", level=Qgis.Critical)
             raise exception
 
     def refresh_info(self):
@@ -284,7 +285,7 @@ class projectFTS:
                     QgsMessageLog.logMessage(f"{err}", tag="ftsPlugin", level=Qgis.Warning)
                     continue
                 
-                QgsMessageLog.logMessage(f"Indexing Layer '{layer.name()}' ({layer_num+1}/{len(layers)}) ...", tag="ftsPlugin", level=Qgis.Info)
+                QgsMessageLog.logMessage(f"Indexing Layer '{layer.name()}' ({layer_num+1}/{len(layers)}) ...", tag="ftsPlugin", level=Qgis.Info)           
 
                 task = QgsTask.fromFunction(f"Indexing Layer '{layer.name()}' ({layer_num+1}/{len(layers)})",
                                             self.insert_features,
@@ -293,6 +294,9 @@ class projectFTS:
                                             total_steps=copy.copy(total_steps),
                                             layer_id=copy.copy(layer.id()),
                                             index_file_path=index_file_path)
+                # IMPORTANT! We have to hide the task from pythons garbage collector to
+                # make sure delayed tasks are not removed.
+                self.tasklist.append(task)
                 QgsApplication.taskManager().addTask(task)
 
             # Connect to layer attribute value changed signal
@@ -330,9 +334,12 @@ class projectFTS:
         os.makedirs(self.db_path, exist_ok=True)
 
     def insert_features(self, task: QgsTask, db_path, total_steps, layer_id, index_file_path):
+        QgsMessageLog.logMessage(f"(indert_feature): {layer_id}", tag="ftsPlugin", level=Qgis.Info)
         project_layer = QgsProject.instance().mapLayer(layer_id)
         uri = project_layer.dataProvider().dataSourceUri()
         #uri = layer_uri
+        
+        raise Exception ("Hello")
 
         # load the layer with features to be imported
         layer = QgsVectorLayer(uri, "importlayer", "ogr")
@@ -468,3 +475,10 @@ class projectFTS:
                 for singleresult in searchresult:
                     self.dockwidget.listView.addItem(str(singleresult))
             cur.close()
+
+def completed2(*args):
+    """This is called when insert_features is finished.
+    Exception is not None if insert_features raises an exception.db_path
+    result is the return value of insert_features."""
+    QgsMessageLog.logMessage("!!!!! completed", tag="ftsPlugin", level=Qgis.Info)
+    
