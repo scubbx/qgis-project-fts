@@ -11,12 +11,10 @@ When new layers are added while the plugin is active, these layers are added to 
 
 When layers are removed while the plugin is active, these layers are also removed from the search index.
 
+The indexing mechanism is using a batch insert with a batch size of 10.000 objects.
+
 **todo:** When entries are added or removed from existing layers, only these entries are also updated in the search-index.
 
 **todo:** Possibility to turn off tracking of changes
-
-**todo:** Visualization of number of layers/features currently in the index
-
-**todo:** Button to clear search field
 
 <a href="https://www.rise-world.com"><img src="RISE-logo.svg" height="250"></a>

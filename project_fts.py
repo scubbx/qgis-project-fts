@@ -47,6 +47,7 @@ import shutil
 
 import sqlite3
 import copy
+import math
 
 class projectFTS:
     """QGIS Plugin Implementation."""
@@ -95,6 +96,8 @@ class projectFTS:
 
         self.set_db_path()
         self.tasklist = []
+
+        self.sqlite_isolation_level = "IMMEDIATE" # possible values: DEFERRED, IMMEDIATE, EXCLUSIVE
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -258,9 +261,11 @@ class projectFTS:
             raise exception
 
     def refresh_info(self):
-        # how many layers are indexed
+        QgsMessageLog.logMessage(f"refresh_info()", tag="ftsPlugin", level=Qgis.Info)
+        ## how many layers are indexed
         info_num_layers = len(self.list_index_files(self.db_path))
-        self.dockwidget.labelDBInfo.text = f"layers loaded: {info_num_layers}"
+        info_dirsize = sum(f.stat().st_size for f in Path(self.db_path).glob('**/*') if f.is_file())
+        self.dockwidget.labelDBInfo.setText(f"search databases: {info_num_layers} ({int(info_dirsize/1024**2)} MB)")
 
     def add_layers(self, layers):
         # Create sqlite db on first added layer
@@ -291,8 +296,9 @@ class projectFTS:
                                             total_steps=copy.copy(total_steps),
                                             layer_id=copy.copy(layer.id()),
                                             index_file_path=index_file_path)
-                # IMPORTANT! We have to hide the task from pythons garbage collector to
-                # make sure delayed tasks are not removed.
+                # IMPORTANT! We have to explicitly make the task visible to pythons garbage collector to
+                # make sure delayed tasks are not removed while they are waiting for execution by
+                # the C++ code of QGIS.
                 self.tasklist.append(task)
                 QgsApplication.taskManager().addTask(task)
 
@@ -310,7 +316,9 @@ class projectFTS:
             #project_layer = QgsProject.instance().mapLayer(layer_id)
             #layer_uri = project_layer.dataProvider().dataSourceUri()
             #QgsMessageLog.logMessage(f"layer_uri: {layer_uri}", tag="ftsPlugin", level=Qgis.Info)
+
             self.drop_index_file(layer_id)
+        self.refresh_info()
 
     def list_index_files(self, index_folder):
         index_files = [x.name for x in os.scandir(index_folder) if x.is_file() and x.name.endswith(".fts")]
@@ -331,10 +339,9 @@ class projectFTS:
         os.makedirs(self.db_path, exist_ok=True)
 
     def insert_features(self, task: QgsTask, db_path, total_steps, layer_id, index_file_path):
-        QgsMessageLog.logMessage(f"(indert_feature): {layer_id}", tag="ftsPlugin", level=Qgis.Info)
+        QgsMessageLog.logMessage(f"(insert_feature): {layer_id}", tag="ftsPlugin", level=Qgis.Info)
         project_layer = QgsProject.instance().mapLayer(layer_id)
         uri = project_layer.dataProvider().dataSourceUri()
-        #uri = layer_uri
         
         #raise Exception ("Hello")
 
@@ -353,33 +360,52 @@ class projectFTS:
         # Insert layer features into corresponding sqlite table
         # we have to use an own connection and cursor object, since we cannot
         # use an element from the main-thread
-        conn = sqlite3.connect(index_file_path, timeout=10, isolation_level="EXCLUSIVE")
+        #conn = sqlite3.connect(index_file_path, timeout=10, isolation_level=self.sqlite_isolation_level)
+        conn = sqlite3.connect(index_file_path, timeout=10)
+        conn.isolation_level = None
         cur = conn.cursor()
-        sql = f"CREATE VIRTUAL TABLE IF NOT EXISTS 'ftslayer' USING fts5 (fid, data, centerwkt,  tokenize='trigram')"
-        cur.execute(sql)
 
-        sql = f"INSERT INTO 'ftslayer' (fid, data, centerwkt) VALUES (?, ?, ?)"
+        cur.execute("BEGIN")
         
-        #all_features = layer.getFeatures()
+        # create and fill the metadata table
+        cur.execute("CREATE TABLE IF NOT EXISTS 'ftslayers' (layer_id)")
+        cur.execute("INSERT INTO 'ftslayers' (layer_id) VALUES ( ? )", (layer_id,) )
+        
+        # create the actual data table
+        cur.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS '{layer_id}' USING fts5 (fid, data, centerwkt,  tokenize='trigram')" )
 
+        cur.execute("COMMIT")
+
+        # prepare the insert statement for the insert-loop
+        sql = f"INSERT INTO '{layer_id}' (fid, data, centerwkt) VALUES (?, ?, ?)"
+        
+        all_features = layer.getFeatures()
+
+        # prepare the transformation object to transform all layers geometries to EPSG:4326
         #source_crs = QgsCoordinateReferenceSystem(layer.crs())
         source_crs = layer.crs()
-        dest_crs = QgsCoordinateReferenceSystem(4326)
+        dest_crs = QgsCoordinateReferenceSystem.fromEpsgId(4326)
         transformation = QgsCoordinateTransform(source_crs, dest_crs, QgsProject.instance())
 
-        #for i, feature in enumerate(layer.getFeatures(QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry))):
+        cur.execute("BEGIN")
+
+        span_size = 10000
+        allfeats = []
         for i, feature in enumerate(layer.getFeatures()):
             if feature.hasGeometry():
                 # Fortschritt aktualisieren
                 task.setProgress((i + 1) / total_steps * 100)
                 feature_attributes = ";".join([ str(x) for x in feature.attributes() ])
-                cur.execute(sql, (feature.id() , feature_attributes, transformation.transform(feature.geometry().centroid().asPoint() ).asWkt() ) )
-                # Check if task was cancelled
-                if task.isCanceled():
-                    QgsMessageLog.logMessage(f"Indexing Task cancelled", tag="ftsPlugin", level=Qgis.Info)
-                    cur.close()
-                    return None  # Task wurde abgebrochen
+                transformedPoint = transformation.transform(feature.geometry().centroid().asPoint() ).asWkt()
+                singleobject = (feature.id(),feature_attributes,transformedPoint)
+                allfeats.append(singleobject)
+                if len(allfeats) >= span_size:
+                    cur.executemany(sql, allfeats )
+                    allfeats = []
         
+        if len(allfeats) > 0: cur.executemany(sql, allfeats )
+
+        cur.execute("COMMIT")
         conn.commit()
         # Remove layer from memory
         del(layer)
@@ -428,21 +454,28 @@ class projectFTS:
             QgsMessageLog.logMessage(f"QgsProject.fileInfo(): {QgsProject.instance().fileName()}", tag="ftsPlugin", level=Qgis.Info)
 
             self.dockwidget.buttonRefreshIndex.clicked.connect(self.reload_all)
+            self.dockwidget.buttonClear.clicked.connect(self.clear_search_box)
             self.dockwidget.textSearch.textChanged.connect(self.search_fts)
             self.dockwidget.listView.itemClicked.connect(self.clicked_object)
+            
+            self.refresh_info()
 
             # perform a layer-add of all layers
             if len(QgsProject.instance().mapLayers().values()) > 0:
                 self.add_layers(QgsProject.instance().mapLayers().values())
 
+    def clear_search_box(self):
+        self.dockwidget.textSearch.clear()
+        self.dockwidget.textSearch.setFocus()
+
     def clicked_object(self):
         obj_index = self.dockwidget.listView.currentRow()
         obj = self.dockwidget.listView.item(obj_index)
         QgsMessageLog.logMessage(f"clicked '{obj.text()}'", tag="ftsPlugin", level=Qgis.Info)
-#        QgsMessageLog.logMessage(f"coords are: '{obj.data(Qt.UserRole)}'", tag="ftsPlugin", level=Qgis.Info)
+        QgsMessageLog.logMessage(f"coords are: '{obj.data(Qt.UserRole)}'", tag="ftsPlugin", level=Qgis.Info)
         canvas = qgis.utils.iface.mapCanvas()
 
-        source_crs = QgsCoordinateReferenceSystem(4326)
+        source_crs = QgsCoordinateReferenceSystem.fromEpsgId(4326)
         dest_crs = QgsProject.instance().crs()
         transformation = QgsCoordinateTransform(source_crs, dest_crs, QgsProject.instance())
 
@@ -467,7 +500,8 @@ class projectFTS:
             self.db_path = None
         
         self.set_db_path()
-
+        
+        self.refresh_info()
         if len(QgsProject.instance().mapLayers().values()) > 0:
             self.add_layers(QgsProject.instance().mapLayers().values())
 
@@ -476,12 +510,18 @@ class projectFTS:
         if len(searchtext) > 3:
             QgsMessageLog.logMessage(f"search_fts in ({self.db_path})", tag="ftsPlugin", level=Qgis.Info)
             for index_file_name in self.list_index_files(self.db_path):
-                #QgsMessageLog.logMessage(f"search_fts({index_file})", tag="ftsPlugin", level=Qgis.Info)
-                conn = sqlite3.connect(os.path.join(self.db_path,index_file_name), timeout=10, isolation_level="EXCLUSIVE")
+                layer_name = index_file_name.split(".")[0] # remove the ".fts" extension
+                QgsMessageLog.logMessage(f"search_fts({index_file_name})", tag="ftsPlugin", level=Qgis.Info)
+                conn = sqlite3.connect(os.path.join(self.db_path,index_file_name), timeout=10, isolation_level=self.sqlite_isolation_level)
                 cur = conn.cursor()
-                sql = f"SELECT * FROM 'ftslayer' WHERE data MATCH ?"
-                searchcursor = cur.execute(sql, (searchtext,))
-                searchresult = searchcursor.fetchall()
+
+                # fetch all available tables inside one database file
+                indextables = cur.execute("SELECT layer_id FROM 'ftslayers'").fetchall()
+                tablelist = [x[0] for x in list(indextables)]
+                tablelist_string = ",".join(tablelist)
+                #QgsMessageLog.logMessage(f"tablelist_string is: ({tablelist_string})", tag="ftsPlugin", level=Qgis.Info)
+
+                searchresult = cur.execute(f"SELECT * FROM {tablelist_string} WHERE data MATCH ?", (searchtext,)).fetchall()
                 for singleresult in searchresult:
                     #QgsMessageLog.logMessage(f"searchresults: {singleresult}", tag="ftsPlugin", level=Qgis.Info)
                     ftsstring = str(singleresult[1])

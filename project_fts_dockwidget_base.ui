@@ -58,7 +58,7 @@
     <item row="5" column="1">
      <widget class="QLabel" name="labelDBInfo">
       <property name="text">
-       <string>objects indexed: 0</string>
+       <string>search databases: 0</string>
       </property>
      </widget>
     </item>
