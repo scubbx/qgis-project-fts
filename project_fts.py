@@ -48,6 +48,7 @@ import shutil
 import sqlite3
 import copy
 import math
+import tempfile
 
 class projectFTS:
     """QGIS Plugin Implementation."""
@@ -332,8 +333,8 @@ class projectFTS:
                 QgsMessageLog.logMessage(f"creating fts database at {QgsProject.instance().fileName()}.fts", tag="ftsPlugin", level=Qgis.Info)
                 self.db_path = f"{QgsProject.instance().fileName()}.fts"
             else:
-                QgsMessageLog.logMessage(f"Project is not saved yet, creating fts database at '/tmp/qgisfts'", tag="ftsPlugin", level=Qgis.Info)
-                self.db_path = '/tmp/qgis.fts'
+                QgsMessageLog.logMessage(f"Project is not saved yet, creating fts database at '{tempfile.gettempdir()}/qgisfts'", tag="ftsPlugin", level=Qgis.Info)
+                self.db_path = os.path.join(tempfile.gettempdir(),'qgis.fts')
         else:
             pass
         os.makedirs(self.db_path, exist_ok=True)
@@ -495,8 +496,8 @@ class projectFTS:
                 if os.path.exists(self.db_path):
                     shutil.rmtree(self.db_path)
             else:
-                if os.path.exists("/tmp/qgisfts"):
-                    os.remove("/tmp/qgisfts")
+                if os.path.exists(os.path.join(tempfile.gettempdir(),'qgis.fts')):
+                    os.remove(os.path.join(tempfile.gettempdir(),'qgis.fts'))
             self.db_path = None
         
         self.set_db_path()
