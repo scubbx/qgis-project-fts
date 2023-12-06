@@ -6,7 +6,7 @@
 name=Project Full Text Search
 qgisMinimumVersion=3.0
 description=This plugin generates a full text search index containing all attributes of all layers of a loaded project. The user then can use a single text-input field to search within all available attributes.
-version=0.1
+version=0.2
 author=Markus Mayr
 email=markus.mayr@gisforge.com
 
@@ -26,7 +26,6 @@ hasProcessingProvider=no
 tags=attribute, search
 
 homepage=https://github.com/scubbx/qgis-project-fts
-category=Plugins
 icon=icon.png
 # experimental flag
 experimental=True

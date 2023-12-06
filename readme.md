@@ -18,3 +18,13 @@ The indexing mechanism is using a batch insert with a batch size of 10.000 objec
 **todo:** Possibility to turn off tracking of changes
 
 <a href="https://www.rise-world.com"><img src="RISE-logo.svg" height="250"></a>
+
+# Changelog
+
+## v0.2
+
+* use systems temp folder [#6](/../../issues/6)
+
+## v0.1
+
+* first release
