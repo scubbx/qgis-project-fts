@@ -396,7 +396,7 @@ class projectFTS:
             if feature.hasGeometry():
                 # Fortschritt aktualisieren
                 task.setProgress((i + 1) / total_steps * 100)
-                feature_attributes = ";".join([ str(x) for x in feature.attributes() ])
+                feature_attributes = " ".join([ str(x) for x in feature.attributes() if str(x) != "NULL" ])
                 transformedPoint = transformation.transform(feature.geometry().centroid().asPoint() ).asWkt()
                 singleobject = (feature.id(),feature_attributes,transformedPoint)
                 allfeats.append(singleobject)
@@ -507,6 +507,7 @@ class projectFTS:
             self.add_layers(QgsProject.instance().mapLayers().values())
 
     def search_fts(self, searchtext):
+        searchtext = searchtext.replace(","," ").replace(";"," ")
         self.dockwidget.listView.clear()
         if len(searchtext) > 3:
             QgsMessageLog.logMessage(f"search_fts in ({self.db_path})", tag="ftsPlugin", level=Qgis.Info)
