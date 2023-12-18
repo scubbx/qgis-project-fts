@@ -24,6 +24,7 @@ The indexing mechanism is using a batch insert with a batch size of 10.000 objec
 ## v0.2
 
 * use systems temp folder [#6](/../../issues/6)
+* do not index "NULL" values and use a blank space instead of semicolon so aggregate column values [#8](/../../issues/8)
 
 ## v0.1
 
